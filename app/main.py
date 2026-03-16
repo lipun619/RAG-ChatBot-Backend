@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -25,9 +26,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: run initial ingestion and start scheduler. Shutdown: stop scheduler."""
-    logger.info("Running initial ingestion...")
-    run_ingestion()
+    """Startup: run initial ingestion in background and start scheduler. Shutdown: stop scheduler."""
+    logger.info("Starting ingestion in background...")
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, run_ingestion)
     start_scheduler()
     yield
     stop_scheduler()
@@ -64,6 +66,8 @@ async def health():
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=3000, reload=True)
+    port = int(os.environ.get("PORT", 3000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
