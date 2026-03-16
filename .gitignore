@@ -1,0 +1,22 @@
+# Virtual environment
+venv/
+.venv/
+
+# Vector database (rebuilt at runtime)
+vector_db/
+
+# Environment variables (contains secrets)
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
