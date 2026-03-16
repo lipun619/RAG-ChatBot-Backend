@@ -7,8 +7,6 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sse_starlette.sse import EventSourceResponse
 
-from app.rag.graph import run_graph
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -26,6 +24,8 @@ class ChatRequest(BaseModel):
 async def chat(request: Request, body: ChatRequest):
     """Chat endpoint — invokes the LangGraph RAG workflow and streams the response via SSE."""
     logger.info("Chat request: '%s'", body.question)
+
+    from app.rag.graph import run_graph
 
     async def event_generator():
         async for chunk in run_graph(body.question):

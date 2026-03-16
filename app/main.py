@@ -10,8 +10,6 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.chat import limiter, router as chat_router
-from app.ingestion.ingest_pipeline import run_ingestion
-from app.ingestion.scheduler import start_scheduler, stop_scheduler
 
 # Load environment variables
 load_dotenv()
@@ -27,6 +25,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: run initial ingestion in background and start scheduler. Shutdown: stop scheduler."""
+    from app.ingestion.ingest_pipeline import run_ingestion
+    from app.ingestion.scheduler import start_scheduler, stop_scheduler
+
     logger.info("Starting ingestion in background...")
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, run_ingestion)

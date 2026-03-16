@@ -2,13 +2,6 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import TypedDict
 
-from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
-from langgraph.graph import END, StateGraph
-
-from app.rag.retriever import get_retriever
-
 logger = logging.getLogger(__name__)
 
 
@@ -17,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class ChatState(TypedDict):
     question: str
-    context: list[Document]
+    context: list
     answer: str
     is_valid: bool
 
@@ -36,6 +29,8 @@ def validate_query(state: ChatState) -> dict:
 
 def retrieve_context(state: ChatState) -> dict:
     """Retrieve relevant documents from the ChromaDB vector store."""
+    from app.rag.retriever import get_retriever
+
     retriever = get_retriever()
     docs = retriever.invoke(state["question"])
     logger.info("Retrieved %d documents for query: '%s'", len(docs), state["question"])
@@ -49,6 +44,9 @@ def check_relevance(state: ChatState) -> dict:
         return {"context": []}
 
     context_text = "\n".join(doc.page_content[:200] for doc in state["context"])
+
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     prompt = ChatPromptTemplate.from_template(
@@ -82,6 +80,9 @@ def generate_answer(state: ChatState) -> dict:
 
     context_text = "\n\n".join(doc.page_content for doc in state["context"])
 
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import ChatOpenAI
+
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
     prompt = ChatPromptTemplate.from_template(
         "You are a helpful assistant that answers questions about Lipun Patel. "
@@ -112,8 +113,10 @@ def invalid_response(state: ChatState) -> dict:
     return {"answer": "Please provide a valid question."}
 
 
-def build_graph() -> StateGraph:
+def build_graph():
     """Build and compile the LangGraph workflow."""
+    from langgraph.graph import END, StateGraph
+
     workflow = StateGraph(ChatState)
 
     # Add nodes
@@ -143,8 +146,15 @@ def build_graph() -> StateGraph:
     return workflow.compile()
 
 
-# Compiled graph (singleton)
-graph = build_graph()
+# Compiled graph (lazy singleton)
+_graph = None
+
+
+def _get_graph():
+    global _graph
+    if _graph is None:
+        _graph = build_graph()
+    return _graph
 
 
 async def run_graph(question: str) -> AsyncGenerator[str, None]:
@@ -156,7 +166,7 @@ async def run_graph(question: str) -> AsyncGenerator[str, None]:
         "is_valid": False,
     }
 
-    result = await graph.ainvoke(initial_state)
+    result = await _get_graph().ainvoke(initial_state)
     answer = result.get("answer", "Sorry, I could not generate a response.")
 
     # Yield answer in chunks for SSE streaming
