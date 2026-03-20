@@ -324,6 +324,17 @@ gcloud run services logs read rag-chatbot-backend --region asia-south1 --limit 3
 - `--no-cpu-throttling` keeps the CPU active during SSE streaming
 - To update data: edit markdown files in `app/data/` → run ingestion locally → redeploy
 
+### Troubleshooting
+
+If deployment fails with `ZIP does not support timestamps before 1980`, fix file timestamps before deploying:
+
+```bash
+cd RAG-ChatBot-Backend
+find . -not -path './.git/*' -exec touch {} +
+```
+
+Then re-run the deploy command.
+
 ---
 
 ## Adding Knowledge
