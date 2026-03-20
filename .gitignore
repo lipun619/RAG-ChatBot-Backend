@@ -2,9 +2,6 @@
 venv/
 .venv/
 
-# Vector database (rebuilt at runtime)
-vector_db/
-
 # Environment variables (contains secrets)
 .env
 
