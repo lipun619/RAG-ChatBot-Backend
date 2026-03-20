@@ -11,6 +11,9 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the sentence-transformers model so it's cached in the image
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 # Copy application code and pre-built vector_db
 COPY app/ app/
 COPY vector_db/ vector_db/
@@ -20,4 +23,4 @@ ENV PORT=8080
 
 EXPOSE ${PORT}
 
-CMD exec gunicorn app.main:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 120
+ENTRYPOINT ["gunicorn", "app.main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080", "--timeout", "120"]
