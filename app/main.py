@@ -1,6 +1,4 @@
-import asyncio
 import logging
-from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -22,25 +20,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Startup: run initial ingestion in background and start scheduler. Shutdown: stop scheduler."""
-    from app.ingestion.ingest_pipeline import run_ingestion
-    from app.ingestion.scheduler import start_scheduler, stop_scheduler
-
-    logger.info("Starting ingestion in background...")
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, run_ingestion)
-    start_scheduler()
-    yield
-    stop_scheduler()
-    logger.info("Application shutdown complete")
-
-
 app = FastAPI(
     title="Lipun Patel RAG ChatBot API",
     description="LangGraph-based RAG chatbot powered by ChromaDB",
-    lifespan=lifespan,
 )
 
 # --- Rate Limiting ---

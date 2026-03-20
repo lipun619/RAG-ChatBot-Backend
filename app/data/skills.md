@@ -14,7 +14,6 @@
 - Python
 - FastAPI
 - Node.js
-- Express.js
 - REST APIs
 
 ## AI / ML
@@ -27,7 +26,6 @@
 - Hugging Face
 
 ## Databases
-- PostgreSQL
 - MongoDB
 - ChromaDB (Vector Database)
 

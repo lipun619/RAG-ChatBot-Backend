@@ -6,10 +6,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.ingestion.github_loader import load_github
 from app.ingestion.local_loader import load_local
-from app.ingestion.resume_loader import load_resume
-from app.ingestion.website_loader import load_website
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +16,11 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
 def run_ingestion() -> None:
-    """Run the full ingestion pipeline: load → chunk → embed → store."""
+    """Run the ingestion pipeline: load local docs → chunk → embed → store."""
     logger.info("Starting ingestion pipeline...")
 
-    # 1. Collect documents from all sources
-    documents = []
-    documents.extend(load_github())
-    documents.extend(load_resume())
-    documents.extend(load_website())
-    documents.extend(load_local())
+    # 1. Collect documents from local data
+    documents = load_local()
 
     if not documents:
         logger.warning("No documents collected — skipping vector DB update")

@@ -8,11 +8,7 @@ langchain-openai
 langchain-core
 chromadb
 sentence-transformers
-apscheduler
-PyGithub
-beautifulsoup4
-requests
-pypdf
 python-dotenv
 sse-starlette
 slowapi
+truststore

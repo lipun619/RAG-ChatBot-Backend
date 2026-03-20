@@ -8,11 +8,15 @@ logger = logging.getLogger(__name__)
 # --- State ---
 
 
+GREETINGS = {"hi", "hello", "hey", "greetings", "good morning", "good afternoon", "good evening", "howdy", "what's up", "sup"}
+
+
 class ChatState(TypedDict):
     question: str
     context: list
     answer: str
     is_valid: bool
+    is_greeting: bool
 
 
 # --- Nodes ---
@@ -22,9 +26,10 @@ def validate_query(state: ChatState) -> dict:
     """Check if the question is valid (non-empty and reasonable length)."""
     question = state["question"].strip()
     is_valid = bool(question) and len(question) >= 2
+    is_greeting = question.lower().rstrip("!?., ") in GREETINGS
     if not is_valid:
         logger.warning("Invalid query rejected: '%s'", state["question"])
-    return {"is_valid": is_valid}
+    return {"is_valid": is_valid, "is_greeting": is_greeting}
 
 
 def retrieve_context(state: ChatState) -> dict:
@@ -105,7 +110,21 @@ def generate_answer(state: ChatState) -> dict:
 
 def _route_after_validation(state: ChatState) -> str:
     """Route based on query validation result."""
-    return "retrieve_context" if state["is_valid"] else "invalid_response"
+    if not state["is_valid"]:
+        return "invalid_response"
+    if state["is_greeting"]:
+        return "greeting_response"
+    return "retrieve_context"
+
+
+def greeting_response(state: ChatState) -> dict:
+    """Return a friendly greeting."""
+    return {
+        "answer": (
+            "Hello! 👋 I'm Lipun's AI assistant. "
+            "Feel free to ask me about his skills, experience, or projects!"
+        )
+    }
 
 
 def invalid_response(state: ChatState) -> dict:
@@ -124,6 +143,7 @@ def build_graph():
     workflow.add_node("retrieve_context", retrieve_context)
     workflow.add_node("check_relevance", check_relevance)
     workflow.add_node("generate_answer", generate_answer)
+    workflow.add_node("greeting_response", greeting_response)
     workflow.add_node("invalid_response", invalid_response)
 
     # Set entry point
@@ -135,12 +155,14 @@ def build_graph():
         _route_after_validation,
         {
             "retrieve_context": "retrieve_context",
+            "greeting_response": "greeting_response",
             "invalid_response": "invalid_response",
         },
     )
     workflow.add_edge("retrieve_context", "check_relevance")
     workflow.add_edge("check_relevance", "generate_answer")
     workflow.add_edge("generate_answer", END)
+    workflow.add_edge("greeting_response", END)
     workflow.add_edge("invalid_response", END)
 
     return workflow.compile()
@@ -164,6 +186,7 @@ async def run_graph(question: str) -> AsyncGenerator[str, None]:
         "context": [],
         "answer": "",
         "is_valid": False,
+        "is_greeting": False,
     }
 
     result = await _get_graph().ainvoke(initial_state)

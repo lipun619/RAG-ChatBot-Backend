@@ -20,7 +20,7 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/api/chat")
-@limiter.limit("1/minute")
+@limiter.limit("5/minute")
 async def chat(request: Request, body: ChatRequest):
     """Chat endpoint — invokes the LangGraph RAG workflow and streams the response via SSE."""
     logger.info("Chat request: '%s'", body.question)
@@ -32,3 +32,16 @@ async def chat(request: Request, body: ChatRequest):
             yield {"data": json.dumps({"content": chunk})}
 
     return EventSourceResponse(event_generator())
+
+
+@router.post("/api/ingest")
+async def ingest():
+    """Trigger the ingestion pipeline to rebuild the vector DB from local data."""
+    from app.ingestion.ingest_pipeline import run_ingestion
+
+    try:
+        run_ingestion()
+        return {"status": "success", "message": "Ingestion complete"}
+    except Exception as e:
+        logger.error("Ingestion failed: %s", e)
+        return {"status": "error", "message": str(e)}
