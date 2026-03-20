@@ -13,9 +13,9 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 
 # RAG ChatBot Backend
 
-A LangGraph-based Retrieval-Augmented Generation (RAG) chatbot backend that answers questions about Lipun Patel using knowledge ingested from multiple sources.
+A LangGraph-based Retrieval-Augmented Generation (RAG) chatbot backend that answers questions about Lipun Patel using knowledge ingested from local markdown files.
 
-Built with **FastAPI**, **LangGraph**, **LangChain**, **ChromaDB**, and **SentenceTransformers**.
+Built with **FastAPI**, **LangGraph**, **LangChain**, **ChromaDB**, and **SentenceTransformers**. Deployed on **Google Cloud Run**.
 
 ---
 
@@ -25,29 +25,28 @@ Built with **FastAPI**, **LangGraph**, **LangChain**, **ChromaDB**, and **Senten
 ┌─────────────────────────────────────────────────────┐
 │                   INGESTION SIDE                     │
 │                                                      │
-│  APScheduler (every 24h)                             │
+│  POST /api/ingest  (on-demand)                       │
 │       │                                              │
 │       ▼                                              │
 │  ingest_pipeline.py                                  │
 │       │                                              │
-│       ├── github_loader.py   (PyGithub)              │
-│       ├── website_loader.py  (BeautifulSoup)         │
-│       ├── resume_loader.py   (pypdf)                 │
-│       └── local_loader.py    (pathlib)               │
+│       └── local_loader.py    (markdown files)        │
 │       │                                              │
 │       ▼                                              │
 │  SentenceTransformers → ChromaDB (vector_db/)        │
 └──────────────────────┬──────────────────────────────┘
-                       │ shared ChromaDB collection
+                       │ pre-built vector_db baked
+                       │ into Docker image
 ┌──────────────────────▼──────────────────────────────┐
 │                   QUERY SIDE (Runtime)               │
 │                                                      │
-│  FastAPI POST /api/chat                              │
+│  FastAPI POST /api/chat or /api/chat/sync            │
 │       │                                              │
 │       ▼                                              │
 │  LangGraph StateGraph                                │
 │       │                                              │
-│       ├── validate_query     (guard node)            │
+│       ├── validate_query     (guard + greeting)      │
+│       ├── greeting_response  (instant reply)         │
 │       ├── retrieve_context   (ChromaDB retriever)    │
 │       ├── check_relevance    (LLM-based check)       │
 │       └── generate_answer    (LLM + context → SSE)   │
@@ -61,49 +60,48 @@ Built with **FastAPI**, **LangGraph**, **LangChain**, **ChromaDB**, and **Senten
 ```
 app/
 ├── api/
-│   └── chat.py                 # POST /api/chat endpoint, SSE streaming, rate limiting
+│   └── chat.py                 # POST /api/chat, /api/chat/sync, /api/ingest endpoints
 ├── rag/
-│   ├── graph.py                # LangGraph StateGraph — 4-node Q&A workflow
-│   └── retriever.py            # ChromaDB + HuggingFace embeddings → LangChain retriever
+│   ├── graph.py                # LangGraph StateGraph — greeting + RAG workflow
+│   └── retriever.py            # ChromaDB + HuggingFace embeddings → cached retriever
 ├── ingestion/
-│   ├── ingest_pipeline.py      # Orchestrates all loaders → chunk → embed → store
-│   ├── github_loader.py        # Loads repos from GitHub via PyGithub
-│   ├── website_loader.py       # Scrapes portfolio website via BeautifulSoup
-│   ├── resume_loader.py        # Extracts text from resume PDF via pypdf
-│   ├── local_loader.py         # Reads markdown files from app/data/
-│   └── scheduler.py            # APScheduler — runs ingestion every 24 hours
+│   ├── ingest_pipeline.py      # Orchestrates local loader → chunk → embed → store
+│   └── local_loader.py         # Reads markdown files from app/data/
 ├── data/
 │   ├── about.md                # Knowledge about Lipun Patel
 │   ├── skills.md               # Skills and technologies
 │   └── experience.md           # Experience and projects
-└── main.py                     # FastAPI app — CORS, rate limiting, lifespan, entry point
+└── main.py                     # FastAPI app — CORS, rate limiting, entry point
 
-vector_db/                      # ChromaDB persistent storage (auto-generated, gitignored)
+vector_db/                      # Pre-built ChromaDB storage (committed, baked into Docker image)
+Dockerfile                      # Docker image for Cloud Run deployment
+.dockerignore                   # Docker build exclusions
 requirements.txt                # Python dependencies
 .env                            # Environment variables (gitignored)
 .env.example                    # Template for .env
-Procfile                        # Render.com start command
+Procfile                        # Gunicorn start command
 ```
 
 ---
 
 ## How It Works
 
-### Ingestion Flow (Startup + Every 24 Hours)
+### Ingestion Flow (On-Demand via `POST /api/ingest`)
 
-1. **Collect** — Four loaders gather documents from GitHub repos, portfolio website, resume PDF, and local markdown files
+1. **Collect** — Loads markdown files from `app/data/`
 2. **Chunk** — `RecursiveCharacterTextSplitter` splits documents into 1000-character chunks with 200-character overlap
 3. **Embed** — `all-MiniLM-L6-v2` (SentenceTransformers) converts chunks into vectors locally (no API key needed)
-4. **Store** — Vectors are saved to ChromaDB at `vector_db/`
+4. **Store** — Vectors are saved to ChromaDB at `vector_db/` (committed and baked into Docker image)
 
 ### Query Flow (Every Chat Request)
 
-When a user sends a question to `POST /api/chat`:
+When a user sends a question to `POST /api/chat` or `POST /api/chat/sync`:
 
-1. **validate_query** — Rejects empty or invalid questions
-2. **retrieve_context** — Converts the question to a vector using the same `all-MiniLM-L6-v2` model, searches ChromaDB for the 5 most similar chunks
-3. **check_relevance** — GPT-4o-mini verifies the retrieved context is relevant to the question
-4. **generate_answer** — GPT-4o-mini generates an answer using only the retrieved context, streamed back as SSE events
+1. **validate_query** — Rejects empty/invalid questions; detects greetings
+2. **greeting_response** — If greeting detected, returns instant friendly reply (skips RAG)
+3. **retrieve_context** — Converts the question to a vector using `all-MiniLM-L6-v2`, searches ChromaDB for the 5 most similar chunks
+4. **check_relevance** — GPT-4o-mini verifies the retrieved context is relevant to the question
+5. **generate_answer** — GPT-4o-mini generates an answer using only the retrieved context
 
 ---
 
@@ -117,10 +115,8 @@ When a user sends a question to `POST /api/chat`:
 | **ChromaDB** | Persistent vector database (local, embedded) |
 | **SentenceTransformers** | Local embedding model (`all-MiniLM-L6-v2`) — free, no API key |
 | **OpenAI GPT-4o-mini** | LLM for relevance checking and answer generation |
-| **APScheduler** | Background scheduler for periodic ingestion |
-| **PyGithub** | GitHub API client for loading repository data |
-| **BeautifulSoup** | HTML parsing for portfolio website scraping |
-| **pypdf** | PDF text extraction for resume |
+| **Docker** | Containerized deployment with pre-built vector DB |
+| **Google Cloud Run** | Serverless hosting |
 | **slowapi** | Rate limiting (5 requests/minute per IP) |
 
 ---
@@ -130,11 +126,12 @@ When a user sends a question to `POST /api/chat`:
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/chat` | Send a question, receive SSE streamed answer |
+| `POST` | `/api/chat/sync` | Send a question, receive JSON answer |
+| `POST` | `/api/ingest` | Trigger vector DB rebuild from local markdown files |
 | `GET` | `/health` | Health check |
 | `GET` | `/docs` | Swagger UI (auto-generated) |
-| `GET` | `/redoc` | ReDoc API docs (auto-generated) |
 
-### POST /api/chat
+### POST /api/chat (SSE Streaming)
 
 **Request:**
 ```json
@@ -148,6 +145,22 @@ When a user sends a question to `POST /api/chat`:
 data: {"content": "Lipun Patel has expe"}
 data: {"content": "rtise in Angular, Ty"}
 data: {"content": "peScript, Python..."}
+```
+
+### POST /api/chat/sync (JSON)
+
+**Request:**
+```json
+{
+  "question": "What are Lipun's skills?"
+}
+```
+
+**Response:**
+```json
+{
+  "answer": "Lipun Patel has expertise in Angular, TypeScript, Python..."
+}
 ```
 
 ---
@@ -189,12 +202,7 @@ cp .env.example .env
 
 ```env
 OPENAI_API_KEY=sk-your-key-here        # Required — for GPT-4o-mini
-GITHUB_TOKEN=ghp_your-token            # Optional — for GitHub repo ingestion
-PORTFOLIO_URL=https://your-site.com    # Optional — for website scraping
-RESUME_PATH=app/data/resume.pdf        # Optional — for resume ingestion
 ```
-
-Only `OPENAI_API_KEY` is required. The other sources are optional — local markdown files in `app/data/` are always loaded.
 
 ### Start the Server
 
@@ -202,16 +210,24 @@ Only `OPENAI_API_KEY` is required. The other sources are optional — local mark
 uvicorn app.main:app --port 3000 --reload
 ```
 
-The server will:
-1. Run initial ingestion (load documents → embed → store in ChromaDB)
-2. Start the 24-hour scheduler
-3. Listen on `http://localhost:3000`
+The server will listen on `http://localhost:3000`.
+
+To build the vector DB (first time or after updating markdown files):
+
+```bash
+curl -X POST http://localhost:3000/api/ingest
+```
 
 ### Test
 
 ```bash
 # Health check
 curl http://localhost:3000/health
+
+# Chat (JSON response — recommended)
+curl -X POST http://localhost:3000/api/chat/sync \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What are Lipun skills?"}'
 
 # Chat (SSE stream)
 curl -X POST http://localhost:3000/api/chat \
@@ -231,78 +247,96 @@ Use the included launch configuration (`.vscode/launch.json`):
 
 ---
 
-## Deploy to Render.com (Free)
+## Docker (Local Testing)
 
-### Step 1: Push to GitHub
+### Build
 
 ```bash
-git init
-git add .
-git commit -m "Initial commit: LangGraph RAG chatbot backend"
-git remote add origin https://github.com/YOUR_USERNAME/chatbot-backend.git
-git branch -M main
-git push -u origin main
+docker build -t rag-bot .
 ```
 
-### Step 2: Create Render Web Service
+### Run
 
-1. Go to [render.com](https://render.com) → Sign up with GitHub
-2. Click **New → Web Service**
-3. Connect your `chatbot-backend` repo
-4. Configure:
-
-| Setting | Value |
-|---|---|
-| Runtime | Python |
-| Build Command | `pip install -r requirements.txt` |
-| Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
-| Instance Type | Free |
-
-### Step 3: Add Environment Variables
-
-In the Render dashboard → Environment tab:
-
-| Key | Value |
-|---|---|
-| `OPENAI_API_KEY` | Your OpenAI API key |
-| `GITHUB_TOKEN` | Your GitHub token (optional) |
-| `PORTFOLIO_URL` | Your portfolio URL (optional) |
-| `RESUME_PATH` | `app/data/resume.pdf` (optional) |
-
-### Step 4: Deploy
-
-Click **Deploy**. Your API will be live at:
-
-```
-https://your-app-name.onrender.com
+```bash
+docker run -p 3000:8080 -e "OPENAI_API_KEY=open-api-key" rag-bot
 ```
 
-### Free Tier Notes
+App will be available at `http://localhost:3000`.
 
-- App sleeps after 15 minutes of inactivity — first request after sleep takes ~30-60 seconds
-- `vector_db/` is ephemeral (wiped on redeploy) — rebuilt automatically on each startup
-- The 24h scheduler won't fire (app sleeps first) — but ingestion runs on every cold start
-- Embedding model (`all-MiniLM-L6-v2`, ~90MB) is re-downloaded on each cold start
+### View Logs
+
+```bash
+docker logs --tail 50 $(docker ps -q -l)
+```
+
+---
+
+## Deploy to Google Cloud Run
+
+### Prerequisites
+
+- [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) installed
+- A Google Cloud project with billing enabled
+
+### Step 1: Build Vector DB Locally
+
+Run ingestion locally to generate the `vector_db/` directory:
+
+```bash
+curl -X POST http://localhost:3000/api/ingest
+```
+
+The `vector_db/` is committed to the repo and baked into the Docker image.
+
+### Step 2: Deploy
+
+```bash
+gcloud run deploy rag-chatbot-backend \
+  --source . \
+  --region asia-south1 \
+  --allow-unauthenticated \
+  --no-cpu-throttling \
+  --memory 1Gi \
+  --timeout 300 \
+  --set-env-vars "OPENAI_API_KEY=open-api-key"
+```
+
+This builds the Docker image in Cloud Build, pushes it to Artifact Registry, and deploys to Cloud Run.
+
+### Step 3: Test
+
+```bash
+curl -X POST https://YOUR-CLOUD-RUN-URL/api/chat/sync \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Who is Lipun?"}'
+```
+
+### View Logs
+
+```bash
+gcloud run services logs read rag-chatbot-backend --region asia-south1 --limit 30
+```
+
+### Notes
+
+- The `all-MiniLM-L6-v2` embedding model is pre-downloaded during Docker build (no HuggingFace downloads at runtime)
+- The retriever is cached as a singleton — first request initializes it, subsequent requests are fast
+- `--no-cpu-throttling` keeps the CPU active during SSE streaming
+- To update data: edit markdown files in `app/data/` → run ingestion locally → redeploy
 
 ---
 
 ## Adding Knowledge
 
-### Local Markdown Files
+Add or edit `.md` files in `app/data/`. Then rebuild the vector DB:
 
-Add `.md` files to `app/data/`. They are automatically loaded on the next ingestion run or server restart.
+```bash
+# Run locally
+curl -X POST http://localhost:3000/api/ingest
 
-### GitHub Repositories
-
-Set `GITHUB_TOKEN` in `.env`. All your public repos (name, description, README, languages) are ingested automatically.
-
-### Portfolio Website
-
-Set `PORTFOLIO_URL` in `.env`. Pages `/about`, `/skills`, and `/projects` are scraped and ingested.
-
-### Resume PDF
-
-Place your resume PDF in `app/data/` and set `RESUME_PATH=app/data/resume.pdf` in `.env`.
+# Redeploy to Cloud Run
+gcloud run deploy rag-chatbot-backend --source . --region asia-south1
+```
 
 ---
 
@@ -311,6 +345,3 @@ Place your resume PDF in `app/data/` and set `RESUME_PATH=app/data/resume.pdf` i
 | Variable | Required | Description |
 |---|---|---|
 | `OPENAI_API_KEY` | Yes | OpenAI API key for GPT-4o-mini |
-| `GITHUB_TOKEN` | No | GitHub personal access token |
-| `PORTFOLIO_URL` | No | Portfolio website base URL |
-| `RESUME_PATH` | No | Path to resume PDF file |
