@@ -37,6 +37,18 @@ async def chat(request: Request, body: ChatRequest):
     )
 
 
+@router.post("/api/chat/sync")
+@limiter.limit("5/minute")
+async def chat_sync(request: Request, body: ChatRequest):
+    """Non-streaming chat endpoint — returns full response as JSON."""
+    logger.info("Chat sync request: '%s'", body.question)
+
+    from app.rag.graph import run_graph_sync
+
+    answer = await run_graph_sync(body.question)
+    return {"answer": answer}
+
+
 @router.post("/api/ingest")
 async def ingest():
     """Trigger the ingestion pipeline to rebuild the vector DB from local data."""

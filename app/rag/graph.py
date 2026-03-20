@@ -196,3 +196,17 @@ async def run_graph(question: str) -> AsyncGenerator[str, None]:
     chunk_size = 20
     for i in range(0, len(answer), chunk_size):
         yield answer[i : i + chunk_size]
+
+
+async def run_graph_sync(question: str) -> str:
+    """Invoke the LangGraph workflow and return the full answer as a string."""
+    initial_state: ChatState = {
+        "question": question,
+        "context": [],
+        "answer": "",
+        "is_valid": False,
+        "is_greeting": False,
+    }
+
+    result = await _get_graph().ainvoke(initial_state)
+    return result.get("answer", "Sorry, I could not generate a response.")
