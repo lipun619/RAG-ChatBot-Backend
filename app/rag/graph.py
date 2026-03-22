@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 # --- State ---
 
 
-GREETINGS = {"hi", "hello", "hey", "greetings", "good morning", "good afternoon", "good evening", "howdy", "what's up", "sup"}
+GREETINGS = {"hi", "hello", "hey", "yoo", "Hi Lipun", "Hello Lipun", "greetings", "good morning", "good afternoon", "good evening", "howdy", "what's up", "sup"}
 
 
 class ChatState(TypedDict):
