@@ -24,7 +24,16 @@ def get_retriever():
     logger.info("Initializing retriever — loading embedding model '%s'...", EMBEDDING_MODEL)
     start = time.time()
 
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "Failed to initialize HuggingFaceEmbeddings because SentenceTransformers/Torch "
+            "could not be loaded. On macOS Apple Silicon, install a compatible PyTorch wheel using:\n"
+            "  python -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu\n"
+            "Then reinstall sentence-transformers."
+        ) from exc
+
     elapsed = time.time() - start
     logger.info("Embedding model loaded in %.2fs", elapsed)
 

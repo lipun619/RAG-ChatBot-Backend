@@ -192,6 +192,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Or simply run the automated setup script:
+
+```bash
+./setup.sh
+```
+
 ### Configure Environment
 
 Copy `.env.example` to `.env` and fill in values:
@@ -199,6 +205,18 @@ Copy `.env.example` to `.env` and fill in values:
 ```bash
 cp .env.example .env
 ```
+
+### macOS / Apple Silicon notes
+
+If you are running this project on macOS Apple Silicon, the `sentence-transformers` dependency can require a compatible PyTorch wheel. If you see an error about `libtorch_cpu.dylib` when starting the app, install PyTorch from the official CPU wheel index first:
+
+```bash
+source venv/bin/activate
+python -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+```
+
+If you already installed `sentence-transformers`, rerun the PyTorch install command and then reinstall `sentence-transformers`.
 
 ```env
 OPENAI_API_KEY=sk-your-key-here        # Required — for GPT-4o-mini

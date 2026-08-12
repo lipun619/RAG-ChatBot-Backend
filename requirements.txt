@@ -12,3 +12,7 @@ python-dotenv
 sse-starlette
 slowapi
 truststore
+
+# On macOS Apple Silicon, install PyTorch from the official CPU wheel index
+# before or after installing requirements if you encounter a missing libtorch_cpu.dylib error:
+# python -m pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
