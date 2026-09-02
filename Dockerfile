@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080
+
 # Install system dependencies required by chromadb and sentence-transformers
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential && \
@@ -12,16 +16,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the sentence-transformers model so it's cached in the image
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# Pre-download the exact embedding model used at runtime so the image is faster to start
+RUN python - <<'PY'
+from sentence_transformers import SentenceTransformer
+SentenceTransformer('sentence-transformers/paraphrase-MiniLM-L3-v2')
+PY
 
 # Copy application code and pre-built vector_db
 COPY app/ app/
 COPY vector_db/ vector_db/
 
-# Cloud Run sets PORT env var (default 8080)
-ENV PORT=8080
+EXPOSE 8080
 
-EXPOSE ${PORT}
-
-ENTRYPOINT ["gunicorn", "app.main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080", "--timeout", "120"]
+CMD ["gunicorn", "app.main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080", "--timeout", "120"]
