@@ -19,39 +19,51 @@ Built with **FastAPI**, **LangGraph**, **LangChain**, **ChromaDB**, and **Senten
 
 ---
 
-## Architecture
+## RAG Flow
 
+```text
+1) Knowledge Source
+   app/data/about.md
+   app/data/skills.md
+   app/data/experience.md
+   app/data/projects.md
+
+2) Ingestion Pipeline
+   load_local() -> RecursiveCharacterTextSplitter -> HuggingFaceEmbeddings
+
+3) Embedding Model
+   sentence-transformers/paraphrase-MiniLM-L3-v2
+   Converts each text chunk into a vector embedding
+
+4) Vector Store
+   ChromaDB persists embeddings in vector_db/
+   Collection: lipun_knowledge
+
+5) User Question
+   POST /api/chat or /api/chat/sync
+
+6) Query Flow in LangGraph
+   validate_query
+   -> if greeting: greeting_response
+   -> else: retrieve_context
+   -> generate_answer
+
+7) Retrieval
+   Question is embedded with the same sentence-transformers model
+   and the top 3 most relevant chunks are fetched from ChromaDB
+
+8) Answer Generation
+   GPT-4o-mini reads the retrieved context and answers using only that context
 ```
-┌─────────────────────────────────────────────────────┐
-│                   INGESTION SIDE                     │
-│                                                      │
-│  POST /api/ingest  (on-demand)                       │
-│       │                                              │
-│       ▼                                              │
-│  ingest_pipeline.py                                  │
-│       │                                              │
-│       └── local_loader.py    (markdown files)        │
-│       │                                              │
-│       ▼                                              │
-│  SentenceTransformers → ChromaDB (vector_db/)        │
-└──────────────────────┬──────────────────────────────┘
-                       │ pre-built vector_db baked
-                       │ into Docker image
-┌──────────────────────▼──────────────────────────────┐
-│                   QUERY SIDE (Runtime)               │
-│                                                      │
-│  FastAPI POST /api/chat or /api/chat/sync            │
-│       │                                              │
-│       ▼                                              │
-│  LangGraph StateGraph                                │
-│       │                                              │
-│       ├── validate_query     (guard + greeting)      │
-│       ├── greeting_response  (instant reply)         │
-│       ├── retrieve_context   (ChromaDB retriever)    │
-│       ├── check_relevance    (LLM-based check)       │
-│       └── generate_answer    (LLM + context → SSE)   │
-└─────────────────────────────────────────────────────┘
-```
+
+### Actual runtime flow in this project
+
+- `app/ingestion/ingest_pipeline.py` loads all markdown files and chunks them with `RecursiveCharacterTextSplitter`.
+- `sentence-transformers/paraphrase-MiniLM-L3-v2` is used to generate embeddings.
+- The vectors are stored in ChromaDB under `vector_db/`.
+- `app/rag/retriever.py` loads the persisted vector store and returns a retriever with `k=3`.
+- `app/rag/graph.py` validates the input, retrieves relevant context, and sends it to `ChatOpenAI(model="gpt-4o-mini")` for answer generation.
+- The app also includes a `check_relevance` function in `graph.py`, but the current compiled graph routes directly from retrieval to answer generation.
 
 ---
 
@@ -89,19 +101,20 @@ Procfile                        # Gunicorn start command
 ### Ingestion Flow (On-Demand via `POST /api/ingest`)
 
 1. **Collect** — Loads markdown files from `app/data/`
-2. **Chunk** — `RecursiveCharacterTextSplitter` splits documents into 1000-character chunks with 200-character overlap
-3. **Embed** — `all-MiniLM-L6-v2` (SentenceTransformers) converts chunks into vectors locally (no API key needed)
-4. **Store** — Vectors are saved to ChromaDB at `vector_db/` (committed and baked into Docker image)
+2. **Chunk** — `RecursiveCharacterTextSplitter` splits documents into chunks of 600 characters with a 120-character overlap
+3. **Embed** — `sentence-transformers/paraphrase-MiniLM-L3-v2` converts each chunk into a vector embedding locally
+4. **Store** — Vectors are saved into the ChromaDB collection named `lipun_knowledge` inside `vector_db/`
 
 ### Query Flow (Every Chat Request)
 
 When a user sends a question to `POST /api/chat` or `POST /api/chat/sync`:
 
-1. **validate_query** — Rejects empty/invalid questions; detects greetings
-2. **greeting_response** — If greeting detected, returns instant friendly reply (skips RAG)
-3. **retrieve_context** — Converts the question to a vector using `all-MiniLM-L6-v2`, searches ChromaDB for the 5 most similar chunks
-4. **check_relevance** — GPT-4o-mini verifies the retrieved context is relevant to the question
-5. **generate_answer** — GPT-4o-mini generates an answer using only the retrieved context
+1. **validate_query** — Rejects empty/invalid questions and detects greeting messages
+2. **greeting_response** — If the message is a greeting, a friendly answer is returned immediately
+3. **retrieve_context** — The incoming question is embedded with the same `paraphrase-MiniLM-L3-v2` model and the top 3 matching chunks are fetched from ChromaDB
+4. **generate_answer** — `gpt-4o-mini` generates a response using only the retrieved context
+
+> The codebase contains a `check_relevance` helper, but the active LangGraph flow currently goes directly from retrieval to answer generation.
 
 ---
 
@@ -110,11 +123,11 @@ When a user sends a question to `POST /api/chat` or `POST /api/chat/sync`:
 | Technology | Role |
 |---|---|
 | **FastAPI** | HTTP server, SSE streaming, CORS |
-| **LangGraph** | Runtime Q&A workflow as a directed StateGraph |
-| **LangChain** | Document model, text splitters, ChromaDB wrapper, LLM interface |
-| **ChromaDB** | Persistent vector database (local, embedded) |
-| **SentenceTransformers** | Local embedding model (`all-MiniLM-L6-v2`) — free, no API key |
-| **OpenAI GPT-4o-mini** | LLM for relevance checking and answer generation |
+| **LangGraph** | Runtime Q&A workflow as a stateful graph |
+| **LangChain** | Document loading, text chunking, ChromaDB wrapper, prompt chaining |
+| **ChromaDB** | Persistent vector database for document retrieval |
+| **SentenceTransformers** | Local embedding model: `sentence-transformers/paraphrase-MiniLM-L3-v2` |
+| **OpenAI GPT-4o-mini** | LLM used for answer generation, with a relevance-check step also implemented in code |
 | **Docker** | Containerized deployment with pre-built vector DB |
 | **Google Cloud Run** | Serverless hosting |
 | **slowapi** | Rate limiting (5 requests/minute per IP) |
