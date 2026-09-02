@@ -169,7 +169,7 @@ data: {"content": "peScript, Python..."}
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.12.x only
 - OpenAI API key
 
 ### Setup

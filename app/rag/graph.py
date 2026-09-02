@@ -22,6 +22,18 @@ class ChatState(TypedDict):
 # --- Nodes ---
 
 
+def _is_openai_quota_error(exc: Exception) -> bool:
+    """Detect OpenAI billing/quota exhaustion errors that should degrade gracefully."""
+    msg = str(exc).lower()
+    return (
+        "429" in msg
+        or "insufficient_quota" in msg
+        or "credit_balance_exhausted" in msg
+        or "quota" in msg
+        or "rate limit" in msg
+    )
+
+
 def validate_query(state: ChatState) -> dict:
     """Check if the question is valid (non-empty and reasonable length)."""
     question = state["question"].strip()
@@ -61,9 +73,15 @@ def check_relevance(state: ChatState) -> dict:
         "Reply with only 'yes' or 'no'."
     )
     chain = prompt | llm
-    result = chain.invoke(
-        {"question": state["question"], "context": context_text}
-    )
+    try:
+        result = chain.invoke(
+            {"question": state["question"], "context": context_text}
+        )
+    except Exception as exc:  # pragma: no cover - depends on external LLM availability
+        logger.warning("OpenAI relevance check failed for '%s': %s", state["question"], exc)
+        if _is_openai_quota_error(exc):
+            logger.warning("OpenAI quota exhausted; continuing with retrieved context without relevance filtering.")
+        return {"context": state["context"]}
 
     is_relevant = "yes" in result.content.lower()
     if not is_relevant:
@@ -103,9 +121,25 @@ def generate_answer(state: ChatState) -> dict:
         "Answer:"
     )
     chain = prompt | llm
-    result = chain.invoke(
-        {"question": state["question"], "context": context_text}
-    )
+    try:
+        result = chain.invoke(
+            {"question": state["question"], "context": context_text}
+        )
+    except Exception as exc:  # pragma: no cover - depends on external LLM availability
+        logger.exception("OpenAI answer generation failed for question '%s'", state["question"])
+        if _is_openai_quota_error(exc):
+            return {
+                "answer": (
+                    "I can’t answer right now because the OpenAI API has no remaining credits. "
+                    "Please add billing credits in your OpenAI account and try again."
+                )
+            }
+        return {
+            "answer": (
+                "I couldn’t generate an answer because the AI service is temporarily unavailable. "
+                "Please try again in a moment."
+            )
+        }
 
     return {"answer": result.content}
 
@@ -146,7 +180,6 @@ def build_graph():
     # Add nodes
     workflow.add_node("validate_query", validate_query)
     workflow.add_node("retrieve_context", retrieve_context)
-    workflow.add_node("check_relevance", check_relevance)
     workflow.add_node("generate_answer", generate_answer)
     workflow.add_node("greeting_response", greeting_response)
     workflow.add_node("invalid_response", invalid_response)
@@ -164,8 +197,7 @@ def build_graph():
             "invalid_response": "invalid_response",
         },
     )
-    workflow.add_edge("retrieve_context", "check_relevance")
-    workflow.add_edge("check_relevance", "generate_answer")
+    workflow.add_edge("retrieve_context", "generate_answer")
     workflow.add_edge("generate_answer", END)
     workflow.add_edge("greeting_response", END)
     workflow.add_edge("invalid_response", END)
